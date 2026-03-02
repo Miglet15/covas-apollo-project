@@ -3,7 +3,7 @@
 > **Part of the [COVAS Local AI Project](https://github.com/Miglet15/covas-local-ai-project/tree/dev)**
 >
 > This repository contains the **memory microservice** that runs on **Apollo** (home server / Ubuntu + Docker).
-> It receives session transcripts from **UNIT-01** (the gaming PC running COVAS), extracts structured memories using a local LLM via Ollama, and persists them in SQLite for future recall.
+> It receives session transcripts from the Server running [COVAS](https://github.com/Miglet15/covas-local-ai-project/tree/dev), extracts structured memories using a local LLM via Ollama, and persists them in SQLite for future recall.
 
 ---
 
@@ -69,7 +69,7 @@ docker exec -it ollama ollama pull phi3:mini
 ### 2. Place the files
 
 ```
-/home/mike/covas/
+/home/user/covas-apollo-project/
 ├── docker-compose.yml
 └── covas-memory/
     ├── Dockerfile
@@ -83,7 +83,7 @@ docker exec -it ollama ollama pull phi3:mini
 ### 3. Build and start
 
 ```bash
-cd /home/mike/covas
+cd /home/user/covas-apollo-project/
 docker compose up -d --build
 ```
 
@@ -106,9 +106,9 @@ Open `http://apollo-ip:8100/` in a browser for the full status dashboard (auto-r
 
 ```python
 # covas_memory_client.py — top of file
-MEMORY_SERVICE_URL = "http://192.168.1.65:8100"   # LAN
+MEMORY_SERVICE_URL = "http://server-ip:8100"   # LAN
 # or Tailscale:
-# MEMORY_SERVICE_URL = "http://100.x.x.x:8100"
+# MEMORY_SERVICE_URL = "http://tailscale-ip:8100"
 ```
 
 ### 3. Integrate into COVAS
