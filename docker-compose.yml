@@ -1,0 +1,42 @@
+version: "3.9"
+
+services:
+
+  # ── Existing Ollama service ──────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"          # Exposed so you can still use it directly if needed
+    networks:
+      - covas-net
+
+  # ── COVAS Memory Service ─────────────────────────────────────────────────
+  covas-memory:
+    build:
+      context: ./covas-memory
+    container_name: covas-memory
+    restart: unless-stopped
+    depends_on:
+      - ollama
+    environment:
+      OLLAMA_URL: "http://ollama:11434"     # Internal Docker network — no port exposure needed
+      OLLAMA_MODEL: "phi3:mini"
+      DB_PATH: "/data/covas_memory.db"
+    volumes:
+      - memory_data:/data                   # Persistent DB storage
+    ports:
+      - "8100:8100"                         # Exposed on Apollo's LAN/Tailscale for UNIT-01
+    networks:
+      - covas-net
+
+volumes:
+  ollama_data:
+  memory_data:
+
+networks:
+  covas-net:
+    driver: bridge
