@@ -1,13 +1,13 @@
 # COVAS Memory Service
 
 > **part of the [COVAS Local AI Project](https://github.com/Miglet15/covas-local-ai-project/tree/dev)**  
-> the memory backend — runs on a home server, handles transcript ingestion, LLM extraction, and SQLite persistence so your ship's computer actually remembers who you are session to session
+> the memory backend — runs on a home server, handles transcript ingestion, LLM extraction, and SQLite persistence so your ship's computer actually remembers who you are between sessions instead of starting fresh every time like nothing happened
 
 ---
 
 ## what this is
 
-this is the companion microservice to [covas-local-ai-project](https://github.com/Miglet15/covas-local-ai-project/tree/dev). it doesn't do much on its own — it exists to offload memory processing off the gaming PC so inference and game I/O don't have to compete for resources.
+this is the companion microservice to [covas-local-ai-project](https://github.com/Miglet15/covas-local-ai-project/tree/dev). it doesn't do much on its own — it exists to offload memory processing off the gaming PC so inference and game I/O don't have to fight each other for resources. good architecture is just setting appropriate boundaries, really.
 
 **what it does:**
 
@@ -16,7 +16,7 @@ this is the companion microservice to [covas-local-ai-project](https://github.co
 - stores everything in SQLite — memories, entities, active ED missions
 - serves those memories back on request so the main server can inject them into context
 
-the main server's `covas_memory_client.py` handles all communication with this service automatically. you mostly just need this running and reachable.
+the main server's `covas_memory_client.py` handles all communication with this service automatically. you mostly just need this running and reachable. it will quietly do its job in the background and ask for nothing in return, which is a quality i respect.
 
 ---
 
@@ -102,8 +102,7 @@ if Ollama isn't running yet, start it first (step 3), then come back and pull.
 ### 3. build and start
 
 ```bash
-git clone https://github.com/Miglet15/covas-apollo-project.git
-cd covas-apollo-project
+cd /your/path/covas
 docker compose up -d --build
 ```
 
@@ -114,7 +113,7 @@ curl http://localhost:8100/health
 # {"status":"ok","time":"..."}
 ```
 
-status dashboard at `http://your-server-ip:8100/` — auto-refreshes every 15 seconds.
+status dashboard at `http://your-server-ip:8100/` — auto-refreshes every 15 seconds. leave it open if you want, or don't. it's there either way.
 
 ---
 
@@ -154,7 +153,7 @@ missions = memory.get_active_missions()
 results  = memory.search_memories("wing mission Robigo")
 ```
 
-the client automatically sends an interval snapshot every 5 minutes so nothing is lost if a session ends unexpectedly.
+the client automatically sends an interval snapshot every 5 minutes so nothing is lost if a session ends unexpectedly. it tries its best. that's all any of us can do.
 
 ---
 
@@ -190,7 +189,7 @@ the client automatically sends an interval snapshot every 5 minutes so nothing i
 }
 ```
 
-`trigger` must be `"session_end"` or `"interval"`. ingestion is async — the endpoint returns `202 Accepted` immediately.
+`trigger` must be `"session_end"` or `"interval"`. ingestion is async — the endpoint returns `202 Accepted` immediately and processes in the background. it won't block you.
 
 ---
 
@@ -209,7 +208,7 @@ the client automatically sends an interval snapshot every 5 minutes so nothing i
 
 ## database
 
-SQLite stored at `/data/covas_memory.db` inside the container, backed by a named Docker volume (`memory_data`) so it survives restarts and rebuilds.
+SQLite stored at `/data/covas_memory.db` inside the container, backed by a named Docker volume (`memory_data`) so it survives restarts and rebuilds. your memories persist. that's the whole point.
 
 **inspect directly on the server:**
 
@@ -287,7 +286,7 @@ docker compose down -v
 |---------|-------------|-----|
 | `/health` times out | container not running | `docker compose up -d` |
 | Ollama shown as unreachable on status page | model not pulled | `docker exec -it ollama ollama pull phi3:mini` |
-| `"Ollama returned invalid JSON"` errors | LLM hallucinating non-JSON | normal for small models; check `/errors` — usually recovers |
+| `"Ollama returned invalid JSON"` errors | LLM hallucinating non-JSON | normal for small models; check `/errors` — usually recovers on its own |
 | memories not appearing after ingest | async processing lag | wait ~30 s; check `docker compose logs -f covas-memory` |
 | gaming PC can't reach this service | firewall / IP mismatch | confirm `MEMORY_SERVICE_URL` in `covas_memory_client.py`; test with `curl http://server-ip:8100/health` from the gaming PC |
 
@@ -295,7 +294,7 @@ docker compose down -v
 
 ## related
 
-- **[covas-local-ai-project](https://github.com/Miglet15/covas-local-ai-project/tree/dev)** — the main server this talks to. the AI bridge, lore injection, COVAS:NEXT integration, status page — all lives there
+- **[covas-local-ai-project](https://github.com/Miglet15/covas-local-ai-project/tree/dev)** — the main server this talks to. the AI bridge, lore injection, status page, COVAS:NEXT integration — all lives there. start there if you're new to this
 - [COVAS:NEXT](https://github.com/RatherRude/Elite-Dangerous-AI-Integration) — the actual Elite Dangerous integration that started all this
 - [Ollama](https://ollama.com/) — local model runtime used for memory extraction
 - [Elite Dangerous](https://www.elitedangerous.com/) — the game
