@@ -1,75 +1,94 @@
-# COVAS Memory Service — Apollo
+# COVAS Memory Service
 
-> **Part of the [COVAS Local AI Project](https://github.com/Miglet15/covas-local-ai-project/tree/dev)**
->
-> This repository contains the **memory microservice** that runs on **Apollo** (home server / Ubuntu + Docker).
-> It receives session transcripts from the Server running [COVAS](https://github.com/Miglet15/covas-local-ai-project/tree/dev), extracts structured memories using a local LLM via Ollama, and persists them in SQLite for future recall.
+> **part of the [COVAS Local AI Project](https://github.com/Miglet15/covas-local-ai-project/tree/dev)**  
+> the memory backend — runs on a home server, handles transcript ingestion, LLM extraction, and SQLite persistence so your ship's computer actually remembers who you are session to session
 
 ---
 
-## Architecture Overview
+## what this is
 
-```
-┌─────────────────────────────┐          LAN / Tailscale
-│         UNIT-01             │ ──────── HTTP POST /ingest ──────► ┌─────────────────────────────┐
-│  (Gaming PC — COVAS AI)     │                                    │         APOLLO              │
-│                             │ ◄─────── HTTP GET /memories ─────  │  (Home Server — Docker)     │
-│  covas_memory_client.py     │                                    │                             │
-│  • Buffers session logs     │                                    │  covas-memory  :8100        │
-│  • Sends on interval/end    │                                    │  ├── FastAPI (main.py)      │
-│  • Queries memories/missions│                                    │  ├── Summarizer (Phi-3 Mini)│
-└─────────────────────────────┘                                    │  ├── SQLite  (/data/*.db)   │
-                                                                   │  └── Status page (/)        │
-                                                                   │                             │
-                                                                   │  ollama  :11434             │
-                                                                   │  └── phi3:mini              │
-                                                                   └─────────────────────────────┘
-```
+this is the companion microservice to [covas-local-ai-project](https://github.com/Miglet15/covas-local-ai-project/tree/dev). it doesn't do much on its own — it exists to offload memory processing off the gaming PC so inference and game I/O don't have to compete for resources.
 
-**Memory flow:**
+**what it does:**
 
-1. UNIT-01 runs COVAS; `covas_memory_client.py` buffers conversation turns.
-2. Every 5 minutes (or at session end) the buffer is sent to Apollo's `/ingest` endpoint.
-3. Apollo's `summarizer.py` feeds the transcript to Phi-3 Mini via Ollama.
-4. The LLM returns structured JSON — categories, topics, entities, ED missions.
-5. Records are stored in SQLite. UNIT-01 can query them at any time for context recall.
+- receives session transcripts from the main COVAS server over HTTP
+- feeds them through a small local LLM (Phi-3 Mini via Ollama) to extract structured memories
+- stores everything in SQLite — memories, entities, active ED missions
+- serves those memories back on request so the main server can inject them into context
+
+the main server's `covas_memory_client.py` handles all communication with this service automatically. you mostly just need this running and reachable.
 
 ---
 
-## Repository Structure
+## architecture
 
 ```
-covas-memory/           ← Apollo-side service (this repo)
-├── Dockerfile
+gaming PC (covas-local-ai-project)
+    │
+    │  HTTP POST /ingest  →  sends session transcripts every 5 min or on session end
+    │  HTTP GET /memories ←  queries stored memories for context injection
+    │
+    ▼
+home server (this repo — Docker)
+    ├── covas-memory  :8100
+    │     ├── FastAPI (main.py)
+    │     ├── Summarizer — Phi-3 Mini via Ollama
+    │     ├── SQLite (/data/covas_memory.db)
+    │     └── status dashboard (/)
+    │
+    └── ollama  :11434
+          └── phi3:mini
+```
+
+**memory flow:**
+
+1. gaming PC runs COVAS; `covas_memory_client.py` buffers conversation turns
+2. every 5 minutes (or at session end) the buffer is sent to `/ingest`
+3. `summarizer.py` feeds the transcript to Phi-3 Mini via Ollama
+4. the LLM returns structured JSON — categories, topics, entities, ED missions
+5. records are stored in SQLite and available for recall on the next query
+
+---
+
+## repository structure
+
+```
+covas-apollo-project/
 ├── docker-compose.yml
-├── requirements.txt
-├── main.py             ← FastAPI app, all HTTP endpoints
-├── summarizer.py       ← Ollama LLM call + JSON parsing
-├── storage.py          ← SQLite schema + CRUD helpers
-├── models.py           ← Pydantic models (SessionPayload, MemoryRecord, …)
-└── covas_memory_client.py  ← Runs on UNIT-01; import into COVAS
+├── .gitignore
+├── README.md
+└── covas-memory/
+    ├── Dockerfile
+    ├── requirements.txt
+    ├── main.py             # FastAPI app, all HTTP endpoints
+    ├── summarizer.py       # Ollama LLM call + JSON parsing
+    ├── storage.py          # SQLite schema + CRUD helpers
+    ├── models.py           # Pydantic models (SessionPayload, MemoryRecord, …)
+    └── covas_memory_client.py  # copy this to the gaming PC / COVAS project
 ```
 
 ---
 
-## Apollo Setup
+## setup
 
-### Prerequisites
+### prerequisites
 
-- Docker + Docker Compose installed on Apollo
-- Apollo reachable from UNIT-01 via LAN or [Tailscale](https://tailscale.com/)
+- Docker + Docker Compose on the home server
+- home server reachable from the gaming PC via LAN or [Tailscale](https://tailscale.com/)
+- Ollama running on the home server
 
-### 1. Pull the Phi-3 Mini model
+### 1. pull the model
 
 ```bash
-# Start Ollama first (or run after step 3 if starting fresh)
 docker exec -it ollama ollama pull phi3:mini
 ```
 
-### 2. Place the files
+if Ollama isn't running yet, start it first (step 3), then come back and pull.
+
+### 2. place the files
 
 ```
-/home/user/covas-apollo-project/
+/your/path/covas/
 ├── docker-compose.yml
 └── covas-memory/
     ├── Dockerfile
@@ -80,80 +99,81 @@ docker exec -it ollama ollama pull phi3:mini
     └── models.py
 ```
 
-### 3. Build and start
+### 3. build and start
 
 ```bash
-cd /home/user/covas-apollo-project/
+git clone https://github.com/Miglet15/covas-apollo-project.git
+cd covas-apollo-project
 docker compose up -d --build
 ```
 
-### 4. Verify
+### 4. verify
 
 ```bash
 curl http://localhost:8100/health
-# {"status":"ok","time":"2025-..."}
+# {"status":"ok","time":"..."}
 ```
 
-Open `http://apollo-ip:8100/` in a browser for the full status dashboard (auto-refreshes every 15 s).
+status dashboard at `http://your-server-ip:8100/` — auto-refreshes every 15 seconds.
 
 ---
 
-## UNIT-01 Setup
+## gaming PC setup
 
-### 1. Copy `covas_memory_client.py` into your COVAS project
+### 1. copy `covas_memory_client.py` into your covas-local-ai-project directory
 
-### 2. Set Apollo's address
+### 2. set the service address
 
 ```python
 # covas_memory_client.py — top of file
-MEMORY_SERVICE_URL = "http://server-ip:8100"   # LAN
-# or Tailscale:
-# MEMORY_SERVICE_URL = "http://tailscale-ip:8100"
+MEMORY_SERVICE_URL = "http://192.168.x.x:8100"   # LAN
+# or via Tailscale:
+# MEMORY_SERVICE_URL = "http://100.x.x.x:8100"
 ```
 
-### 3. Integrate into COVAS
+### 3. integrate into the main server
 
 ```python
 from covas_memory_client import memory
 
-# ── Session lifecycle ──────────────────────────────────────────────────────────
-memory.new_session()                          # Call when COVAS starts
+# session lifecycle
+memory.new_session()                          # call when COVAS starts
 
-# ── During conversation (feed every turn) ─────────────────────────────────────
+# during conversation — feed every turn
 memory.append(f"User: {user_input}")
 memory.append(f"COVAS: {covas_response}")
 
-# ── End of session ────────────────────────────────────────────────────────────
+# end of session
 memory.send_session_end(
     ed_context={"system": "Sol", "station": "Jameson Memorial"}
 )
 
-# ── Query memories at any time ────────────────────────────────────────────────
+# query memories at any time
 recent   = memory.get_recent_memories(limit=5)
 missions = memory.get_active_missions()
 results  = memory.search_memories("wing mission Robigo")
 ```
 
-The client automatically sends an interval snapshot every **5 minutes** so no data is lost if a session is interrupted.
+the client automatically sends an interval snapshot every 5 minutes so nothing is lost if a session ends unexpectedly.
 
 ---
 
-## API Reference
+## api reference
 
-| Method   | Endpoint                        | Description                                 |
-|----------|---------------------------------|---------------------------------------------|
-| `GET`    | `/`                             | HTML status dashboard (auto-refresh 15 s)   |
-| `GET`    | `/health`                       | Liveness check — `{"status":"ok"}`          |
-| `GET`    | `/stats`                        | JSON stats (for UNIT-01 status polling)     |
-| `POST`   | `/ingest`                       | Receive a session payload from UNIT-01      |
-| `POST`   | `/memories/query`               | Search / filter memories                    |
-| `GET`    | `/memories/recent?limit=N`      | N most recent memories                      |
-| `GET`    | `/memories/session/{id}`        | All memories for a specific session         |
-| `GET`    | `/memories/categories`          | List of valid category strings              |
-| `GET`    | `/ed/missions/active`           | Active Elite Dangerous missions             |
-| `PATCH`  | `/ed/missions/{id}/status`      | Update mission status (active/complete/failed) |
-| `GET`    | `/errors?limit=N`               | Recent processing errors                    |
-| `DELETE` | `/errors`                       | Clear error log                             |
+| method | endpoint | description |
+|--------|----------|-------------|
+| `GET` | `/` | HTML status dashboard (auto-refresh 15 s) |
+| `GET` | `/health` | liveness check — `{"status":"ok"}` |
+| `GET` | `/stats` | JSON stats |
+| `POST` | `/ingest` | receive a session payload from the gaming PC |
+| `POST` | `/memories/query` | search / filter memories |
+| `GET` | `/memories/recent?limit=N` | N most recent memories |
+| `GET` | `/memories/session/{id}` | all memories for a specific session |
+| `GET` | `/memories/categories` | list of valid category strings |
+| `GET` | `/ed/missions/active` | active Elite Dangerous missions |
+| `PATCH` | `/ed/missions/{id}/status` | update mission status (active/complete/failed) |
+| `GET` | `/errors?limit=N` | recent processing errors |
+| `DELETE` | `/errors` | clear error log |
 
 ### POST `/ingest` — payload schema
 
@@ -170,65 +190,65 @@ The client automatically sends an interval snapshot every **5 minutes** so no da
 }
 ```
 
-`trigger` must be `"session_end"` or `"interval"`. Ingestion is handled asynchronously — the endpoint returns `202 Accepted` immediately.
+`trigger` must be `"session_end"` or `"interval"`. ingestion is async — the endpoint returns `202 Accepted` immediately.
 
 ---
 
-## Memory Categories
+## memory categories
 
-| Category          | Description                                  |
-|-------------------|----------------------------------------------|
-| `general`         | General conversation and notes               |
-| `elite_dangerous` | In-game events, exploration, combat, trading |
-| `person`          | Named individuals — NPCs or real people      |
-| `place`           | Systems, stations, and notable locations     |
-| `preference`      | User preferences and remembered settings     |
-| `task`            | Tasks, reminders, or follow-ups              |
+| category | description |
+|----------|-------------|
+| `general` | general conversation and notes |
+| `elite_dangerous` | in-game events, exploration, combat, trading |
+| `person` | named individuals — NPCs or real people |
+| `place` | systems, stations, and notable locations |
+| `preference` | user preferences and remembered settings |
+| `task` | tasks, reminders, or follow-ups |
 
 ---
 
-## Database
+## database
 
-SQLite stored at `/data/covas_memory.db` inside the container, backed by a named Docker volume (`memory_data`) for persistence across restarts and rebuilds.
+SQLite stored at `/data/covas_memory.db` inside the container, backed by a named Docker volume (`memory_data`) so it survives restarts and rebuilds.
 
-**Inspect directly on Apollo:**
+**inspect directly on the server:**
 
 ```bash
-# List tables
+# list tables
 docker exec -it covas-memory sqlite3 /data/covas_memory.db ".tables"
 
-# Browse recent memories
+# browse recent memories
 docker exec -it covas-memory sqlite3 /data/covas_memory.db \
   "SELECT created_at, category, topic FROM memories ORDER BY created_at DESC LIMIT 10;"
 
-# Active ED missions
+# active ED missions
 docker exec -it covas-memory sqlite3 /data/covas_memory.db \
   "SELECT mission_type, giver, destination_system, reward FROM ed_missions WHERE status='active';"
 ```
 
-**Schema tables:**
+**schema tables:**
 
-| Table        | Purpose                                          |
-|--------------|--------------------------------------------------|
-| `sessions`   | One row per UNIT-01 session with ED context      |
-| `memories`   | Core memory records (category, topic, summary)   |
-| `entities`   | Named persons, places, factions, ships           |
-| `ed_missions`| Elite Dangerous mission tracking                 |
-| `error_log`  | LLM processing errors, capped at 500 rows        |
+| table | purpose |
+|-------|---------|
+| `sessions` | one row per gaming PC session with ED context |
+| `memories` | core memory records (category, topic, summary) |
+| `entities` | named persons, places, factions, ships |
+| `ed_missions` | Elite Dangerous mission tracking |
+| `error_log` | LLM processing errors, capped at 500 rows |
 
 ---
 
-## Configuration
+## configuration
 
-All config is via environment variables in `docker-compose.yml`:
+all config via environment variables in `docker-compose.yml`:
 
-| Variable       | Default                   | Description                       |
-|----------------|---------------------------|-----------------------------------|
-| `OLLAMA_URL`   | `http://ollama:11434`     | Ollama API base URL               |
-| `OLLAMA_MODEL` | `phi3:mini`               | Model to use for extraction       |
-| `DB_PATH`      | `/data/covas_memory.db`   | SQLite database path              |
+| variable | default | description |
+|----------|---------|-------------|
+| `OLLAMA_URL` | `http://ollama:11434` | Ollama API base URL |
+| `OLLAMA_MODEL` | `phi3:mini` | model to use for extraction |
+| `DB_PATH` | `/data/covas_memory.db` | SQLite database path |
 
-To switch to a larger model (e.g. Llama 3):
+to switch to a larger model:
 
 ```yaml
 environment:
@@ -237,49 +257,49 @@ environment:
 
 ---
 
-## Useful Commands
+## useful commands
 
 ```bash
-# View live logs
+# view live logs
 docker compose logs -f covas-memory
 
-# Restart after code changes
+# restart after code changes
 docker compose up -d --build covas-memory
 
-# Force-pull a new Ollama model
+# pull a new Ollama model
 docker exec -it ollama ollama pull phi3:mini
 
-# Backup the database
+# backup the database
 docker cp covas-memory:/data/covas_memory.db ./backup_$(date +%F).db
 
-# Full teardown (keeps volumes)
+# full teardown (keeps volumes)
 docker compose down
 
-# Full teardown including volumes (⚠ deletes all memories)
+# full teardown including volumes (⚠ deletes all memories)
 docker compose down -v
 ```
 
 ---
 
-## Troubleshooting
+## troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `/health` times out | Container not running | `docker compose up -d` |
-| Ollama shown as unreachable on status page | Model not pulled | `docker exec -it ollama ollama pull phi3:mini` |
-| `"Ollama returned invalid JSON"` errors | LLM hallucinating non-JSON | Normal for small models; check `/errors` — usually recovers |
-| Memories not appearing after ingest | Async processing lag | Wait ~30 s; check logs with `docker compose logs -f covas-memory` |
-| UNIT-01 can't reach Apollo | Firewall / IP mismatch | Confirm `MEMORY_SERVICE_URL` in `covas_memory_client.py`; test with `curl http://apollo-ip:8100/health` from UNIT-01 |
-
----
-
-## Related
-
-- **[COVAS Local AI Project](https://github.com/Miglet15/covas-local-ai-project/tree/dev)** — The UNIT-01 side: voice input, LLM orchestration, Elite Dangerous integration, and TTS.
-- **[Ollama](https://ollama.com/)** — Local LLM runtime used for memory extraction.
-- **[Elite Dangerous](https://www.elitedangerous.com/)** — The space game COVAS is built around.
+| symptom | likely cause | fix |
+|---------|-------------|-----|
+| `/health` times out | container not running | `docker compose up -d` |
+| Ollama shown as unreachable on status page | model not pulled | `docker exec -it ollama ollama pull phi3:mini` |
+| `"Ollama returned invalid JSON"` errors | LLM hallucinating non-JSON | normal for small models; check `/errors` — usually recovers |
+| memories not appearing after ingest | async processing lag | wait ~30 s; check `docker compose logs -f covas-memory` |
+| gaming PC can't reach this service | firewall / IP mismatch | confirm `MEMORY_SERVICE_URL` in `covas_memory_client.py`; test with `curl http://server-ip:8100/health` from the gaming PC |
 
 ---
 
-*Apollo · covas-memory v1.0 · Phi-3 Mini via Ollama · SQLite*
-# covas-apollo-project
+## related
+
+- **[covas-local-ai-project](https://github.com/Miglet15/covas-local-ai-project/tree/dev)** — the main server this talks to. the AI bridge, lore injection, COVAS:NEXT integration, status page — all lives there
+- [COVAS:NEXT](https://github.com/RatherRude/Elite-Dangerous-AI-Integration) — the actual Elite Dangerous integration that started all this
+- [Ollama](https://ollama.com/) — local model runtime used for memory extraction
+- [Elite Dangerous](https://www.elitedangerous.com/) — the game
+
+---
+
+*Elite Dangerous and related assets are property of Frontier Developments.*
